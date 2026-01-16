@@ -618,3 +618,89 @@ select:focus-visible {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--accent-primary);
 }
+
+/* ============================================
+   Mesh Statistics Panel (BLADE 3D Meshes)
+   ============================================ */
+
+#mesh-stats-panel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(18, 18, 26, 0.95);
+    backdrop-filter: blur(var(--blur-amount));
+    -webkit-backdrop-filter: blur(var(--blur-amount));
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 24px;
+    z-index: 200;
+    min-width: 350px;
+    max-width: 90vw;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px var(--shadow-dark);
+}
+
+#mesh-stats-panel.hidden {
+    display: none;
+}
+
+#mesh-stats-panel h3 {
+    font-family: var(--font-display);
+    font-size: 16px;
+    margin-bottom: 16px;
+    color: var(--accent-secondary);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 12px;
+}
+
+#mesh-stats-content {
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+#mesh-stats-content .stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+#mesh-stats-content .stat-label {
+    color: var(--text-secondary);
+}
+
+#mesh-stats-content .stat-value {
+    font-family: var(--font-display);
+    color: var(--accent-secondary);
+}
+
+#close-mesh-stats {
+    margin-top: 16px;
+    width: 100%;
+}
+
+/* Mesh mode indicator */
+#mesh-mode-toggle:checked + span::after {
+    content: ' (Active)';
+    color: var(--accent-secondary);
+    font-size: 10px;
+}
+
+/* Mesh controls group styling */
+#mesh-controls-group {
+    background: rgba(0, 212, 170, 0.05);
+    border-radius: 8px;
+    padding: 8px;
+    margin-top: 8px;
+    border: 1px solid rgba(0, 212, 170, 0.1);
+}
+
+#mesh-controls-group .control-group {
+    margin-bottom: 8px;
+}
+
+#mesh-controls-group .control-group:last-child {
+    margin-bottom: 0;
+}

@@ -7,10 +7,13 @@
  * - Mouse-driven parallax camera movement
  * - Stereoscopic dual-camera rendering
  * - Scene transition management
+ * - 3D mesh viewing (BLADE-derived glTF/GLB meshes)
  */
 
 import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ImageScene, RenderMode } from './ImageScene.js';
+import { MeshScene, MeshDisplayMode, LightingPreset } from './MeshScene.js';
 
 export class DepthViewer {
     constructor(container) {
@@ -23,6 +26,11 @@ export class DepthViewer {
         this.multiLayerGroups = [];  // Stores layer groups when in multi-layer mode
         this.isMultiLayerMode = false;
         this.currentRenderMode = RenderMode.HYBRID;  // Default to parallax (zero artifacts)
+        
+        // Mesh mode support (BLADE-derived 3D meshes)
+        this.meshScenes = [];  // MeshScene instances for glTF/GLB
+        this.isMeshMode = false;
+        this.orbitControls = null;  // For mesh mode camera control
         
         // Configuration
         this.config = {
@@ -45,6 +53,12 @@ export class DepthViewer {
             pointSizeAttenuation: 0.5,// How much depth affects size
             pointSoftness: 0.3,       // Point edge softness (0-1)
             pointCloudDensity: 1,     // 1 = full res, 2 = half, etc.
+            // Mesh mode settings (BLADE-derived 3D meshes)
+            meshAutoRotate: false,    // Auto-rotate mesh
+            meshAutoRotateSpeed: 0.5, // Rotation speed
+            meshLightingPreset: 'studio', // studio, natural, dramatic, rim
+            meshDisplayMode: 'textured', // textured, wireframe, normal, depth
+            meshRimLightIntensity: 0.3,
         };
         
         // Mouse tracking
@@ -157,6 +171,23 @@ export class DepthViewer {
             this.config.nearPlane,
             this.config.farPlane
         );
+        
+        // Orbit controls for mesh mode (initialized but disabled by default)
+        this._initOrbitControls();
+    }
+    
+    /**
+     * Initialize orbit controls for mesh mode
+     */
+    _initOrbitControls() {
+        this.orbitControls = new OrbitControls(this.camera, this.renderer.domElement);
+        this.orbitControls.enableDamping = true;
+        this.orbitControls.dampingFactor = 0.05;
+        this.orbitControls.screenSpacePanning = true;
+        this.orbitControls.minDistance = 1;
+        this.orbitControls.maxDistance = 20;
+        this.orbitControls.maxPolarAngle = Math.PI * 0.95;
+        this.orbitControls.enabled = false;  // Disabled by default (enable in mesh mode)
     }
     
     /**
@@ -321,21 +352,32 @@ export class DepthViewer {
         
         const deltaTime = this.clock.getDelta();
         
-        // Update camera parallax
-        this._updateCamera(deltaTime);
-        
-        // Update depth info
-        this._updateDepthInfo();
-        
-        // Update active scenes
-        this.scenes.forEach((scene, index) => {
-            if (scene.mesh) {
-                scene.update(deltaTime);
+        // Different update logic for mesh mode vs depth mode
+        if (this.isMeshMode) {
+            // Mesh mode: use orbit controls
+            if (this.orbitControls && this.orbitControls.enabled) {
+                this.orbitControls.update();
             }
-        });
+            
+            // Update mesh scenes
+            this.meshScenes.forEach(scene => {
+                scene.update(deltaTime);
+            });
+        } else {
+            // Depth mode: use parallax camera
+            this._updateCamera(deltaTime);
+            this._updateDepthInfo();
+            
+            // Update active scenes
+            this.scenes.forEach((scene, index) => {
+                if (scene.mesh) {
+                    scene.update(deltaTime);
+                }
+            });
+        }
         
         // Render
-        if (this.config.stereoEnabled) {
+        if (this.config.stereoEnabled && !this.isMeshMode) {
             this._renderStereo();
         } else {
             this.renderer.render(this.scene, this.camera);
@@ -436,13 +478,34 @@ export class DepthViewer {
      * @param {number} index - Target image index
      */
     goToImage(index) {
-        if (this.isTransitioning || index === this.currentIndex || index < 0 || index >= this.scenes.length) {
+        const maxIndex = this.isMeshMode ? this.meshScenes.length : this.scenes.length;
+        
+        if (this.isTransitioning || index === this.currentIndex || index < 0 || index >= maxIndex) {
             return;
         }
         
         this.isTransitioning = true;
         
-        if (this.isMultiLayerMode) {
+        if (this.isMeshMode) {
+            // Handle mesh transition
+            if (this.meshScenes[this.currentIndex]) {
+                this.meshScenes[this.currentIndex].setVisible(false);
+            }
+            
+            this.currentIndex = index;
+            
+            if (this.meshScenes[this.currentIndex]) {
+                this.meshScenes[this.currentIndex].setVisible(true);
+                this.meshScenes[this.currentIndex].setLightingPreset(this.config.meshLightingPreset);
+            }
+            
+            this.isTransitioning = false;
+            
+            window.dispatchEvent(new CustomEvent('imageChanged', {
+                detail: { index: this.currentIndex, meshMode: true }
+            }));
+            
+        } else if (this.isMultiLayerMode) {
             // Handle multi-layer transition
             this._setLayerGroupVisible(this.currentIndex, false);
             this._setLayerGroupVisible(index, true);
@@ -573,7 +636,21 @@ export class DepthViewer {
      * Get total image count
      */
     getImageCount() {
-        return this.scenes.length;
+        return this.isMeshMode ? this.meshScenes.length : this.scenes.length;
+    }
+    
+    /**
+     * Get mesh count
+     */
+    getMeshCount() {
+        return this.meshScenes.length;
+    }
+    
+    /**
+     * Check if meshes are loaded
+     */
+    hasMeshes() {
+        return this.meshScenes.length > 0;
     }
     
     /**
@@ -1221,11 +1298,248 @@ export class DepthViewer {
         return null;
     }
     
+    // =========================================================================
+    // MESH MODE METHODS (BLADE-derived 3D meshes)
+    // =========================================================================
+    
+    /**
+     * Load glTF/GLB meshes
+     * @param {Array<{mesh: string, name: string}>} meshData - Array of mesh URLs
+     */
+    async loadMeshes(meshData) {
+        console.log(`[DepthViewer] Loading ${meshData.length} meshes...`);
+        
+        // Clear existing mesh scenes
+        this.meshScenes.forEach(scene => scene.dispose());
+        this.meshScenes = [];
+        
+        // Load each mesh
+        for (let i = 0; i < meshData.length; i++) {
+            const data = meshData[i];
+            
+            try {
+                const meshScene = new MeshScene(this.scene, this.camera, {
+                    autoRotate: this.config.meshAutoRotate,
+                    autoRotateSpeed: this.config.meshAutoRotateSpeed,
+                    enableShadows: true,
+                    rimLightIntensity: this.config.meshRimLightIntensity,
+                });
+                
+                await meshScene.load(data.mesh, data.name);
+                
+                // Hide all but first (only show if in mesh mode)
+                meshScene.setVisible(false);
+                
+                this.meshScenes.push(meshScene);
+                console.log(`[DepthViewer] ✓ Loaded mesh: ${data.name}`);
+                
+            } catch (error) {
+                console.error(`[DepthViewer] Failed to load mesh: ${data.mesh}`, error);
+            }
+        }
+        
+        console.log(`[DepthViewer] Loaded ${this.meshScenes.length} meshes`);
+        
+        // Dispatch event
+        window.dispatchEvent(new CustomEvent('meshesLoaded', {
+            detail: {
+                count: this.meshScenes.length,
+                meshes: meshData
+            }
+        }));
+        
+        return this.meshScenes;
+    }
+    
+    /**
+     * Enable mesh mode (switches from depth parallax to 3D mesh viewing)
+     */
+    enableMeshMode() {
+        if (this.isMeshMode) return;
+        
+        console.log('[DepthViewer] Enabling mesh mode');
+        this.isMeshMode = true;
+        
+        // Hide all depth-based scenes
+        this.scenes.forEach(scene => scene.setVisible(false));
+        
+        // Disable multi-layer if active
+        if (this.isMultiLayerMode) {
+            this._disableMultiLayerMode();
+        }
+        
+        // Enable orbit controls for mesh interaction
+        if (this.orbitControls) {
+            this.orbitControls.enabled = true;
+        }
+        
+        // Show current mesh
+        if (this.meshScenes[this.currentIndex]) {
+            this.meshScenes[this.currentIndex].setVisible(true);
+            this.meshScenes[this.currentIndex].setLightingPreset(this.config.meshLightingPreset);
+        }
+        
+        // Reset camera for mesh viewing
+        this.camera.position.set(0, 0, 4);
+        this.camera.lookAt(0, 0, 0);
+        if (this.orbitControls) {
+            this.orbitControls.target.set(0, 0, 0);
+            this.orbitControls.update();
+        }
+        
+        // Dispatch event
+        window.dispatchEvent(new CustomEvent('meshModeChanged', {
+            detail: { enabled: true }
+        }));
+    }
+    
+    /**
+     * Disable mesh mode (returns to depth parallax)
+     */
+    disableMeshMode() {
+        if (!this.isMeshMode) return;
+        
+        console.log('[DepthViewer] Disabling mesh mode');
+        this.isMeshMode = false;
+        
+        // Hide all meshes
+        this.meshScenes.forEach(scene => scene.setVisible(false));
+        
+        // Disable orbit controls
+        if (this.orbitControls) {
+            this.orbitControls.enabled = false;
+        }
+        
+        // Show current depth scene
+        if (this.scenes[this.currentIndex]) {
+            this.scenes[this.currentIndex].setVisible(true);
+        }
+        
+        // Reset camera to parallax position
+        this.resetCamera();
+        
+        // Dispatch event
+        window.dispatchEvent(new CustomEvent('meshModeChanged', {
+            detail: { enabled: false }
+        }));
+    }
+    
+    /**
+     * Toggle mesh mode
+     * @returns {boolean} New mesh mode state
+     */
+    toggleMeshMode() {
+        if (this.isMeshMode) {
+            this.disableMeshMode();
+        } else {
+            this.enableMeshMode();
+        }
+        return this.isMeshMode;
+    }
+    
+    /**
+     * Check if mesh mode is active
+     * @returns {boolean}
+     */
+    isMeshModeActive() {
+        return this.isMeshMode;
+    }
+    
+    /**
+     * Set mesh lighting preset
+     * @param {string} preset - 'studio', 'natural', 'dramatic', 'rim'
+     */
+    setMeshLightingPreset(preset) {
+        this.config.meshLightingPreset = preset;
+        
+        if (this.isMeshMode && this.meshScenes[this.currentIndex]) {
+            this.meshScenes[this.currentIndex].setLightingPreset(preset);
+        }
+    }
+    
+    /**
+     * Set mesh display mode
+     * @param {string} mode - 'textured', 'wireframe', 'normal', 'depth', 'vertexColors'
+     */
+    setMeshDisplayMode(mode) {
+        this.config.meshDisplayMode = mode;
+        
+        if (this.isMeshMode && this.meshScenes[this.currentIndex]) {
+            this.meshScenes[this.currentIndex].setDisplayMode(mode);
+        }
+    }
+    
+    /**
+     * Set mesh auto-rotation
+     * @param {boolean} enabled
+     * @param {number} speed
+     */
+    setMeshAutoRotate(enabled, speed = 0.5) {
+        this.config.meshAutoRotate = enabled;
+        this.config.meshAutoRotateSpeed = speed;
+        
+        this.meshScenes.forEach(scene => {
+            scene.setAutoRotate(enabled, speed);
+        });
+    }
+    
+    /**
+     * Set mesh rim light intensity
+     * @param {number} intensity - 0-2
+     */
+    setMeshRimLightIntensity(intensity) {
+        this.config.meshRimLightIntensity = intensity;
+        
+        this.meshScenes.forEach(scene => {
+            scene.setRimLightIntensity(intensity);
+        });
+    }
+    
+    /**
+     * Get mesh statistics for current mesh
+     * @returns {Object|null}
+     */
+    getMeshStats() {
+        if (this.meshScenes[this.currentIndex]) {
+            return this.meshScenes[this.currentIndex].getStats();
+        }
+        return null;
+    }
+    
+    /**
+     * Play mesh animation (if available)
+     * @param {number|string} animation - Animation index or name
+     */
+    playMeshAnimation(animation) {
+        if (this.meshScenes[this.currentIndex]) {
+            this.meshScenes[this.currentIndex].playAnimation(animation);
+        }
+    }
+    
+    /**
+     * Stop mesh animation
+     */
+    stopMeshAnimation() {
+        if (this.meshScenes[this.currentIndex]) {
+            this.meshScenes[this.currentIndex].stopAnimation();
+        }
+    }
+    
     /**
      * Cleanup and dispose
      */
     dispose() {
+        // Dispose depth scenes
         this.scenes.forEach(scene => scene.dispose());
+        
+        // Dispose mesh scenes
+        this.meshScenes.forEach(scene => scene.dispose());
+        
+        // Dispose orbit controls
+        if (this.orbitControls) {
+            this.orbitControls.dispose();
+        }
+        
         this.renderer.dispose();
         this.container.removeChild(this.renderer.domElement);
     }

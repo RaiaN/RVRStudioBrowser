@@ -122,6 +122,56 @@
         <div class="control-group">
             <button id="diagnose-btn">Diagnose Depth Map</button>
         </div>
+
+        <hr style="border-color: var(--border-color); margin: 12px 0;">
+        
+        <!-- MESH MODE CONTROLS (BLADE-derived 3D meshes) -->
+        <div class="control-group">
+            <label>
+                <input type="checkbox" id="mesh-mode-toggle">
+                🎭 3D Mesh Mode (BLADE)
+            </label>
+        </div>
+        
+        <div id="mesh-controls-group" style="display: none;">
+            <div class="control-group">
+                <label for="mesh-lighting-preset">Lighting</label>
+                <select id="mesh-lighting-preset">
+                    <option value="studio" selected>Studio</option>
+                    <option value="natural">Natural</option>
+                    <option value="dramatic">Dramatic</option>
+                    <option value="rim">Rim Light</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label for="mesh-display-mode">Display</label>
+                <select id="mesh-display-mode">
+                    <option value="textured" selected>Textured</option>
+                    <option value="wireframe">Wireframe</option>
+                    <option value="normal">Normals</option>
+                    <option value="depth">Depth</option>
+                    <option value="vertexColors">Vertex Colors</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label for="mesh-rim-light">Rim Light</label>
+                <input type="range" id="mesh-rim-light" min="0" max="100" value="30">
+                <span id="mesh-rim-light-value">30%</span>
+            </div>
+            
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" id="mesh-auto-rotate">
+                    Auto Rotate
+                </label>
+            </div>
+            
+            <div class="control-group">
+                <button id="mesh-stats-btn">Mesh Statistics</button>
+            </div>
+        </div>
     </aside>
 
     <!-- Diagnostics Panel -->
@@ -129,6 +179,13 @@
         <h3>Depth Map Diagnostics</h3>
         <div id="diagnostics-content"></div>
         <button id="close-diagnostics">Close</button>
+    </div>
+
+    <!-- Mesh Statistics Panel -->
+    <div id="mesh-stats-panel" class="hidden">
+        <h3>🎭 Mesh Statistics</h3>
+        <div id="mesh-stats-content"></div>
+        <button id="close-mesh-stats">Close</button>
     </div>
 
     <!-- Navigation Controls -->

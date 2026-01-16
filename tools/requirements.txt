@@ -9,8 +9,9 @@ Pillow>=9.0.0
 torch>=2.0.0
 torchvision>=0.15.0
 
-# HuggingFace (for depth & segmentation models)
+# HuggingFace (for depth, segmentation, pose models)
 transformers>=4.35.0
+accelerate>=0.24.0  # For faster inference
 
 # Progress bars
 tqdm>=4.60.0
@@ -25,15 +26,56 @@ scipy>=1.7.0
 matplotlib>=3.5.0
 
 # ===========================================
+# HUMANOID MESH GENERATION (generate_mesh.py)
+# ===========================================
+
+# 3D Mesh Processing
+trimesh>=4.0.0
+pyglet>=2.0.0  # Required by trimesh for visualization
+networkx>=2.6.0  # Required by trimesh for mesh operations
+
+# Advanced mesh processing
+open3d>=0.17.0  # Poisson reconstruction, point cloud processing
+
+# SMPL/SMPL-X body models (optional but recommended)
+smplx>=0.1.28
+chumpy>=0.70  # Required by smplx
+
+# PyRender for mesh visualization (optional)
+# pyrender>=0.1.45
+
+# ===========================================
+# HMR2 / 4D-Humans (SOTA Human Mesh Recovery)
+# ===========================================
+# 
+# For best humanoid mesh results, install 4D-Humans:
+#   pip install git+https://github.com/shubham-goel/4D-Humans.git
+# 
+# Also requires SMPL model files:
+#   - Download from: https://smpl.is.tue.mpg.de/
+#   - Set: export SMPL_MODEL_DIR=/path/to/smpl/models
+#
+# ===========================================
+
+# ===========================================
 # Models Used (auto-downloaded by HuggingFace)
 # ===========================================
 # 
 # DEPTH ESTIMATION:
-#   - depth-anything (LiheYoung/depth-anything-*)
+#   - depth-anything/Depth-Anything-V2-Base-hf (default)
 #   - depth-pro (apple/DepthPro-hf)
+#   - LiheYoung/depth-anything-*
+#
+# HUMAN DETECTION:
+#   - facebook/detr-resnet-50 (object detection)
 #
 # SEGMENTATION:
 #   - SAM (facebook/sam-vit-base/large/huge)
-#   - HQ-SAM (syscv/hq-sam-vit-base) - Better quality
+#   - HQ-SAM (syscv/hq-sam-vit-base)
+#
+# HUMANOID MESH:
+#   - HMR2 (4D-Humans) → SMPL mesh
+#   - Depth-based with human focus
+#   - Poisson surface reconstruction
 #
 # ===========================================

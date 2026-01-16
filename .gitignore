@@ -20,6 +20,7 @@ tools/masks
 tools/mpi_output
 tools/inpainted
 assets/
+blade/
 
 # Node.js
 node_modules/

@@ -3,10 +3,12 @@
  * Entry point for RVR Studio 3D Photo Viewer
  * 
  * Initializes the depth viewer and connects UI controls.
+ * Supports both depth-based parallax and BLADE-derived 3D mesh viewing.
  */
 
 import { DepthViewer } from './DepthViewer.js';
 import { RenderMode, DebugMode } from './ImageScene.js';
+import { MeshDisplayMode, LightingPreset } from './MeshScene.js';
 
 // =============================================================================
 // Sample Image Data
@@ -30,6 +32,26 @@ const SAMPLE_IMAGES = [
         image: 'assets/IMG_20260116_163328_560.jpg',
         depth: 'assets/IMG_20260116_163328_560_depth.png',
         name: 'She'
+    }
+];
+
+// Sample 3D meshes (BLADE/SOTA humanoid meshes from glTF/GLB files)
+// Generate these using: 
+//   python tools/generate_mesh.py image.jpg mesh.glb --method hmr2
+//   OR with depth: python tools/generate_mesh.py image.jpg mesh.glb --method depth --depth depth.png
+// Batch: python tools/generate_mesh.py --batch ./assets/ ./assets/meshes/ --method depth --depth ./depths/
+const SAMPLE_MESHES = [
+    {
+        mesh: 'assets/meshes/IMG_20260116_161032_363.glb',
+        name: 'He (3D Mesh)'
+    },
+    {
+        mesh: 'assets/meshes/IMG_20260116_161405_615.glb',
+        name: 'Cat (3D Mesh)'
+    },
+    {
+        mesh: 'assets/meshes/IMG_20260116_163328_560.glb',
+        name: 'She (3D Mesh)'
     }
 ];
 
@@ -146,6 +168,19 @@ function cacheElements() {
     elements.parallaxAmountValue = document.getElementById('parallax-amount-value');
     elements.debugLayersGroup = document.getElementById('debug-layers-group');
     elements.debugLayersToggle = document.getElementById('debug-layers-toggle');
+    
+    // Mesh mode controls
+    elements.meshModeToggle = document.getElementById('mesh-mode-toggle');
+    elements.meshControlsGroup = document.getElementById('mesh-controls-group');
+    elements.meshLightingPreset = document.getElementById('mesh-lighting-preset');
+    elements.meshDisplayMode = document.getElementById('mesh-display-mode');
+    elements.meshAutoRotate = document.getElementById('mesh-auto-rotate');
+    elements.meshRimLight = document.getElementById('mesh-rim-light');
+    elements.meshRimLightValue = document.getElementById('mesh-rim-light-value');
+    elements.meshStatsBtn = document.getElementById('mesh-stats-btn');
+    elements.meshStatsPanel = document.getElementById('mesh-stats-panel');
+    elements.meshStatsContent = document.getElementById('mesh-stats-content');
+    elements.closeMeshStats = document.getElementById('close-mesh-stats');
 }
 
 /**
@@ -277,6 +312,149 @@ function setupUIControls() {
         elements.closeDiagnostics.addEventListener('click', () => {
             elements.diagnosticsPanel.classList.add('hidden');
         });
+    }
+    
+    // === MESH MODE CONTROLS ===
+    
+    // Mesh mode toggle
+    if (elements.meshModeToggle) {
+        elements.meshModeToggle.addEventListener('change', async (e) => {
+            const enabled = e.target.checked;
+            
+            if (enabled) {
+                // Check if meshes are loaded, if not try to load them
+                if (!viewer.hasMeshes()) {
+                    console.log('Loading 3D meshes...');
+                    showLoading();
+                    try {
+                        await viewer.loadMeshes(SAMPLE_MESHES);
+                    } catch (error) {
+                        console.warn('Failed to load meshes:', error);
+                        e.target.checked = false;
+                        hideLoading();
+                        return;
+                    }
+                    hideLoading();
+                }
+                
+                viewer.enableMeshMode();
+            } else {
+                viewer.disableMeshMode();
+            }
+            
+            // Show/hide mesh controls
+            if (elements.meshControlsGroup) {
+                elements.meshControlsGroup.style.display = enabled ? 'block' : 'none';
+            }
+            
+            // Update instructions
+            updateInstructions(enabled);
+        });
+    }
+    
+    // Mesh lighting preset
+    if (elements.meshLightingPreset) {
+        elements.meshLightingPreset.addEventListener('change', (e) => {
+            viewer.setMeshLightingPreset(e.target.value);
+        });
+    }
+    
+    // Mesh display mode
+    if (elements.meshDisplayMode) {
+        elements.meshDisplayMode.addEventListener('change', (e) => {
+            viewer.setMeshDisplayMode(e.target.value);
+        });
+    }
+    
+    // Mesh auto-rotate
+    if (elements.meshAutoRotate) {
+        elements.meshAutoRotate.addEventListener('change', (e) => {
+            viewer.setMeshAutoRotate(e.target.checked);
+        });
+    }
+    
+    // Mesh rim light intensity
+    if (elements.meshRimLight) {
+        elements.meshRimLight.addEventListener('input', (e) => {
+            const value = parseInt(e.target.value);
+            const normalizedValue = value / 50;  // Convert 0-100 to 0-2
+            viewer.setMeshRimLightIntensity(normalizedValue);
+            if (elements.meshRimLightValue) {
+                elements.meshRimLightValue.textContent = `${value}%`;
+            }
+        });
+    }
+    
+    // Mesh stats button
+    if (elements.meshStatsBtn) {
+        elements.meshStatsBtn.addEventListener('click', () => {
+            showMeshStats();
+        });
+    }
+    
+    // Close mesh stats
+    if (elements.closeMeshStats) {
+        elements.closeMeshStats.addEventListener('click', () => {
+            if (elements.meshStatsPanel) {
+                elements.meshStatsPanel.classList.add('hidden');
+            }
+        });
+    }
+}
+
+/**
+ * Show mesh statistics panel
+ */
+function showMeshStats() {
+    const stats = viewer.getMeshStats();
+    
+    if (!stats || !elements.meshStatsPanel || !elements.meshStatsContent) {
+        return;
+    }
+    
+    elements.meshStatsContent.innerHTML = `
+        <div class="stat-row">
+            <span class="stat-label">Mesh Count</span>
+            <span class="stat-value">${stats.meshCount}</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Vertices</span>
+            <span class="stat-value">${stats.vertexCount.toLocaleString()}</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Triangles</span>
+            <span class="stat-value">${stats.triangleCount.toLocaleString()}</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Animations</span>
+            <span class="stat-value">${stats.hasAnimations ? stats.animationCount : 'None'}</span>
+        </div>
+        ${stats.bounds ? `
+        <div class="stat-row">
+            <span class="stat-label">Bounds</span>
+            <span class="stat-value" style="font-size: 10px;">
+                Min: [${stats.bounds.min.map(v => v.toFixed(2)).join(', ')}]<br>
+                Max: [${stats.bounds.max.map(v => v.toFixed(2)).join(', ')}]
+            </span>
+        </div>
+        ` : ''}
+    `;
+    
+    elements.meshStatsPanel.classList.remove('hidden');
+}
+
+/**
+ * Update instructions based on mode
+ * @param {boolean} isMeshMode - Whether mesh mode is active
+ */
+function updateInstructions(isMeshMode) {
+    const instructionsEl = document.getElementById('instructions');
+    if (instructionsEl) {
+        if (isMeshMode) {
+            instructionsEl.innerHTML = '<p>Drag to rotate • Scroll to zoom • Right-click to pan • Arrow keys to navigate</p>';
+        } else {
+            instructionsEl.innerHTML = '<p>Move mouse to look around • Scroll to zoom • Arrow keys to navigate</p>';
+        }
     }
 }
 
