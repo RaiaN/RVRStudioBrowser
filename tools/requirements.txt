@@ -1,0 +1,33 @@
+# Requirements for RVR Studio tools
+# Install: pip install -r requirements.txt
+
+# Core
+numpy>=1.21.0
+Pillow>=9.0.0
+
+# PyTorch
+torch>=2.0.0
+torchvision>=0.15.0
+
+# HuggingFace (for depth & segmentation models)
+transformers>=4.35.0
+
+# Progress bars
+tqdm>=4.60.0
+
+# Optional: OpenCV (for some utilities)
+# opencv-python>=4.5.0
+
+# ===========================================
+# Models Used (auto-downloaded by HuggingFace)
+# ===========================================
+# 
+# DEPTH ESTIMATION:
+#   - depth-anything (LiheYoung/depth-anything-*)
+#   - depth-pro (apple/DepthPro-hf)
+#
+# SEGMENTATION:
+#   - SAM (facebook/sam-vit-base/large/huge)
+#   - HQ-SAM (syscv/hq-sam-vit-base) - Better quality
+#
+# ===========================================

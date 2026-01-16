@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RVR Studio - 3D Photo Viewer</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Main 3D Canvas Container -->
+    <div id="viewer-container"></div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay">
+        <div class="loader">
+            <div class="loader-ring"></div>
+            <span class="loader-text">Loading...</span>
+        </div>
+    </div>
+
+    <!-- Top Header -->
+    <header id="header">
+        <h1>RVR Studio</h1>
+        <span class="subtitle">3D Photo Viewer</span>
+    </header>
+
+    <!-- Control Panel -->
+    <aside id="controls">
+        <div class="control-group">
+            <label for="depth-slider">Depth Intensity</label>
+            <input type="range" id="depth-slider" min="0" max="100" value="30">
+            <span id="depth-value">30%</span>
+        </div>
+
+        <div class="control-group">
+            <label for="parallax-slider">Parallax Strength</label>
+            <input type="range" id="parallax-slider" min="0" max="100" value="50">
+            <span id="parallax-value">50%</span>
+        </div>
+
+        <div class="control-group">
+            <label for="mesh-resolution">Mesh Resolution</label>
+            <select id="mesh-resolution">
+                <option value="64">Low (64)</option>
+                <option value="128" selected>Medium (128)</option>
+                <option value="256">High (256)</option>
+                <option value="384">Ultra (384)</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label>
+                <input type="checkbox" id="stereo-toggle">
+                Stereoscopic View
+            </label>
+        </div>
+
+        <div class="control-group">
+            <label>
+                <input type="checkbox" id="auto-dolly-toggle">
+                Auto Camera Dolly
+            </label>
+        </div>
+
+        <div class="control-group">
+            <label>
+                <input type="checkbox" id="wireframe-toggle">
+                Show Wireframe
+            </label>
+        </div>
+
+        <div class="control-group">
+            <button id="reset-camera">Reset Camera</button>
+        </div>
+
+        <hr style="border-color: var(--border-color); margin: 8px 0;">
+
+        <div class="control-group">
+            <label for="render-mode">Render Mode</label>
+            <select id="render-mode">
+                <option value="basic" selected>Basic</option>
+                <option value="multiLayer">Multi-Layer ⭐</option>
+            </select>
+        </div>
+        
+        <div class="control-group" id="layer-count-group" style="display: none;">
+            <label for="layer-count">Layer Count</label>
+            <select id="layer-count">
+                <option value="2" selected>2 Layers</option>
+                <option value="3">3 Layers</option>
+                <option value="4">4 Layers</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="debug-mode">Debug View</label>
+            <select id="debug-mode">
+                <option value="none" selected>Normal</option>
+                <option value="depth">Depth Map</option>
+                <option value="heatmap">Depth Heatmap</option>
+                <option value="contours">Depth Contours</option>
+                <option value="edges">Edge Detection (artifacts)</option>
+                <option value="displacement">Displacement</option>
+                <option value="wireframe">Wireframe</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="edge-softness">Edge Softness</label>
+            <input type="range" id="edge-softness" min="0" max="50" value="15">
+            <span id="edge-softness-value">15%</span>
+        </div>
+
+        <div class="control-group">
+            <button id="diagnose-btn">Diagnose Depth Map</button>
+        </div>
+    </aside>
+
+    <!-- Diagnostics Panel -->
+    <div id="diagnostics-panel" class="hidden">
+        <h3>Depth Map Diagnostics</h3>
+        <div id="diagnostics-content"></div>
+        <button id="close-diagnostics">Close</button>
+    </div>
+
+    <!-- Navigation Controls -->
+    <nav id="navigation">
+        <button id="prev-btn" class="nav-btn" title="Previous (←)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="15,18 9,12 15,6"></polyline>
+            </svg>
+        </button>
+        <div id="image-counter">
+            <span id="current-index">1</span> / <span id="total-images">0</span>
+        </div>
+        <button id="next-btn" class="nav-btn" title="Next (→)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="9,6 15,12 9,18"></polyline>
+            </svg>
+        </button>
+    </nav>
+
+    <!-- Image Thumbnails -->
+    <div id="thumbnails"></div>
+
+    <!-- Info Panel (depth under cursor) -->
+    <div id="info-panel">
+        <span id="depth-info">Depth: --</span>
+    </div>
+
+    <!-- Instructions -->
+    <div id="instructions">
+        <p>Move mouse to look around • Scroll to zoom • Arrow keys to navigate</p>
+    </div>
+
+    <!-- Three.js from CDN -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <!-- Application Scripts -->
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>
