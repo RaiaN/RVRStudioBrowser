@@ -22,7 +22,7 @@ export class DepthViewer {
         // Multi-layer support
         this.multiLayerGroups = [];  // Stores layer groups when in multi-layer mode
         this.isMultiLayerMode = false;
-        this.currentRenderMode = RenderMode.BASIC;
+        this.currentRenderMode = RenderMode.HYBRID;  // Default to parallax (zero artifacts)
         
         // Configuration
         this.config = {
@@ -40,6 +40,11 @@ export class DepthViewer {
             softEdges: true,          // Enable edge artifact fading
             edgeThreshold: 0.06,      // Depth difference that triggers fade
             edgeFadeWidth: 0.12,      // How gradual the fade is
+            // Point Cloud settings
+            pointSize: 2.0,           // Base point size in pixels
+            pointSizeAttenuation: 0.5,// How much depth affects size
+            pointSoftness: 0.3,       // Point edge softness (0-1)
+            pointCloudDensity: 1,     // 1 = full res, 2 = half, etc.
         };
         
         // Mouse tracking
@@ -264,6 +269,14 @@ export class DepthViewer {
         // Camera always looks at center
         this.camera.lookAt(this.cameraTarget);
         
+        // Update viewOffset for hybrid mode (UV-based parallax)
+        if (this.config.renderMode === RenderMode.HYBRID) {
+            // Pass mouse position directly as view offset for UV parallax
+            for (const scene of this.scenes) {
+                scene.setViewOffset(this.mouse.x, this.mouse.y);
+            }
+        }
+        
         // Update stereo cameras if enabled
         if (this.config.stereoEnabled) {
             const halfSep = this.config.stereoSeparation / 2;
@@ -354,7 +367,7 @@ export class DepthViewer {
     
     /**
      * Load images with depth maps
-     * @param {Array} imageData - Array of {image: url, depth: url, mask?: url, name: string}
+     * @param {Array} imageData - Array of {image: url, depth: url, mask?: url, inpainted?: url, name: string}
      */
     async loadImages(imageData) {
         // Store image data for multi-layer mode
@@ -366,6 +379,16 @@ export class DepthViewer {
             
             // Store mask URL if provided
             imageScene.maskUrl = data.mask || null;
+            
+            // Load mask texture for Hybrid mode (foreground/background separation)
+            if (data.mask) {
+                await imageScene.loadMaskTexture(data.mask);
+            }
+            
+            // Load inpainted texture for Point Cloud/Hybrid modes
+            if (data.inpainted) {
+                await imageScene.loadInpaintedTexture(data.inpainted);
+            }
             
             // Initially hide all but first
             if (index !== 0) {
@@ -555,17 +578,18 @@ export class DepthViewer {
     
     /**
      * Set render mode for all scenes
-     * @param {string} mode - 'basic', 'edgeAware', 'multiLayer', or 'parallax'
+     * @param {string} mode - 'multiLayer' or 'hybrid'
      */
     async setRenderMode(mode) {
         this.currentRenderMode = mode;
         
         if (mode === 'multiLayer') {
-            // Switch to multi-layer rendering
+            // Switch to multi-layer rendering (3D mesh)
             await this._enableMultiLayerMode();
         } else {
-            // Switch back to single-mesh rendering
+            // Switch to hybrid parallax mode (zero artifacts!)
             this._disableMultiLayerMode();
+            console.log('[Parallax] Enabling depth-based parallax mode');
             this.scenes.forEach(scene => {
                 scene.setRenderMode(mode);
             });
@@ -1026,6 +1050,56 @@ export class DepthViewer {
     }
     
     /**
+     * Set parallax amount for hybrid mode (UV-based)
+     * @param {number} value - Parallax strength (0.01-0.10)
+     */
+    setParallaxAmount(value) {
+        this.scenes.forEach(scene => {
+            scene.setParallaxAmount(value);
+        });
+    }
+    
+    /**
+     * Toggle debug visualization of edge points (hybrid mode)
+     * @param {boolean} enabled - Show edge points as cyan
+     */
+    setDebugEdges(enabled) {
+        this.scenes.forEach(scene => {
+            scene.setDebugEdges(enabled);
+        });
+    }
+    
+    /**
+     * Toggle debug visualization of layers (hybrid mode)
+     * @param {boolean} enabled - Show FG=green, BG=magenta
+     */
+    setDebugLayers(enabled) {
+        this.scenes.forEach(scene => {
+            scene.setDebugLayers(enabled);
+        });
+    }
+    
+    /**
+     * Show only background layer (for debugging)
+     * @param {boolean} bgOnly - true = hide foreground
+     */
+    setShowBackgroundOnly(bgOnly) {
+        this.scenes.forEach(scene => {
+            scene.setShowBackgroundOnly(bgOnly);
+        });
+    }
+    
+    /**
+     * Show only foreground layer (for debugging)
+     * @param {boolean} fgOnly - true = hide background
+     */
+    setShowForegroundOnly(fgOnly) {
+        this.scenes.forEach(scene => {
+            scene.setShowForegroundOnly(fgOnly);
+        });
+    }
+    
+    /**
      * Set edge fade width for artifact hiding
      * @param {number} value - Fade width (0.05-0.3)
      */
@@ -1056,6 +1130,83 @@ export class DepthViewer {
         if (this.isMultiLayerMode) {
             this._updateLayerEdgeSettings();
         }
+    }
+    
+    // =========================================================================
+    // POINT CLOUD METHODS
+    // =========================================================================
+    
+    /**
+     * Set point size for point cloud mode
+     * @param {number} size - Base point size in pixels (1-10)
+     */
+    setPointSize(size) {
+        this.config.pointSize = size;
+        this.scenes.forEach(scene => {
+            scene.setPointSize(size);
+        });
+    }
+    
+    /**
+     * Set point size attenuation (how much depth affects size)
+     * @param {number} attenuation - 0 = no effect, 1 = near points 2x larger
+     */
+    setPointSizeAttenuation(attenuation) {
+        this.config.pointSizeAttenuation = attenuation;
+        this.scenes.forEach(scene => {
+            scene.setPointSizeAttenuation(attenuation);
+        });
+    }
+    
+    /**
+     * Set point softness (edge falloff)
+     * @param {number} softness - 0 = hard circles, 1 = very soft
+     */
+    setPointSoftness(softness) {
+        this.config.pointSoftness = softness;
+        this.scenes.forEach(scene => {
+            scene.setPointSoftness(softness);
+        });
+    }
+    
+    /**
+     * Set point cloud density (affects performance vs quality)
+     * @param {number} density - 1 = full resolution, 2 = half, etc.
+     */
+    setPointCloudDensity(density) {
+        this.config.pointCloudDensity = density;
+        this.scenes.forEach(scene => {
+            scene.setPointCloudDensity(density);
+        });
+    }
+    
+    /**
+     * Load inpainted textures for all scenes (for point cloud disocclusion fill)
+     * @param {Array} inpaintedUrls - Array of inpainted texture URLs matching scene order
+     */
+    async loadInpaintedTextures(inpaintedUrls) {
+        const promises = this.scenes.map((scene, index) => {
+            if (inpaintedUrls[index]) {
+                return scene.loadInpaintedTexture(inpaintedUrls[index]);
+            }
+            return Promise.resolve(false);
+        });
+        
+        const results = await Promise.all(promises);
+        const loadedCount = results.filter(r => r).length;
+        console.log(`[PointCloud] Loaded ${loadedCount}/${this.scenes.length} inpainted textures`);
+        return loadedCount;
+    }
+    
+    /**
+     * Get point cloud statistics for current scene
+     */
+    getPointCloudStats() {
+        const currentScene = this.scenes[this.currentIndex];
+        if (currentScene) {
+            return currentScene.getPointCloudStats();
+        }
+        return null;
     }
     
     /**

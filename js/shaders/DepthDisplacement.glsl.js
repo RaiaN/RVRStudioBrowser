@@ -482,23 +482,404 @@ export const ParallaxOcclusionFragment = `
 `;
 
 // =============================================================================
+// POINT CLOUD SHADERS - Zero edge distortion by design
+// =============================================================================
+
+/**
+ * Point Cloud Vertex Shader
+ * Simple grid-based approach:
+ * 1. Position comes directly from geometry (grid vertices)
+ * 2. UV used to sample depth and color
+ * 3. Displace Z based on depth value
+ * 4. Point size calculated to maintain pixel coverage
+ */
+export const PointCloudVertex = `
+    uniform sampler2D depthMap;
+    uniform float depthIntensity;
+    uniform float depthBias;
+    uniform float pointSize;
+    uniform float pointSizeAttenuation;
+    
+    varying vec2 vUv;
+    varying float vDepth;
+    
+    void main() {
+        vUv = uv;
+        
+        // Sample depth at this point's UV
+        float depth = texture2D(depthMap, uv).r;
+        vDepth = depth;
+        
+        // Start with grid position, displace Z by depth
+        // Use moderate scale for depth displacement
+        vec3 pos = position;
+        pos.z += (depth - depthBias) * depthIntensity * 0.3;
+        
+        // Transform to clip space
+        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        
+        // Point size: use constant size (no perspective scaling for stability)
+        // pointSize is in pixels, directly controlled by UI
+        // Small boost for closer points (higher depth values)
+        float sizeBoost = 1.0 + depth * pointSizeAttenuation * 0.2;
+        gl_PointSize = pointSize * sizeBoost;
+    }
+`;
+
+/**
+ * Point Cloud Fragment Shader
+ * Renders points as circles with image color.
+ */
+export const PointCloudFragment = `
+    uniform sampler2D imageMap;
+    uniform float opacity;
+    uniform float pointSoftness;
+    
+    varying vec2 vUv;
+    varying float vDepth;
+    
+    void main() {
+        // Circular point shape
+        vec2 center = gl_PointCoord - vec2(0.5);
+        float dist = length(center) * 2.0;
+        
+        // Soft edge falloff
+        float alpha = 1.0 - smoothstep(1.0 - pointSoftness, 1.0, dist);
+        if (alpha < 0.01) discard;
+        
+        // Sample color from image
+        vec4 texColor = texture2D(imageMap, vUv);
+        
+        gl_FragColor = vec4(texColor.rgb, texColor.a * alpha * opacity);
+    }
+`;
+
+// =============================================================================
+// LAYERED HYBRID MODE - Foreground + Background separation
+// =============================================================================
+
+/**
+ * DEPTH-ONLY PARALLAX MODE
+ * NO vertex displacement = NO edge artifacts!
+ * Uses UV offset based on depth for parallax effect.
+ * Only requires: image + depth map (no mask or inpainted needed!)
+ */
+
+/**
+ * Simple Flat Vertex Shader - no displacement
+ */
+export const FlatVertex = `
+    varying vec2 vUv;
+    
+    void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+`;
+
+/**
+ * Depth-Based Parallax Fragment Shader
+ * Single layer with depth-based UV offset for parallax effect.
+ * Close objects (high depth) move more, far objects move less.
+ */
+export const DepthParallaxFragment = `
+    uniform sampler2D imageMap;
+    uniform sampler2D depthMap;
+    uniform float opacity;
+    uniform float parallaxAmount;  // How much UV shifts with depth
+    uniform vec2 viewOffset;       // Camera offset from center (-1 to 1)
+    uniform float debugLayer;      // Show depth visualization
+    
+    varying vec2 vUv;
+    
+    void main() {
+        // Sample depth at original UV
+        float depth = texture2D(depthMap, vUv).r;
+        
+        // Parallax: shift UV based on depth and view direction
+        // Close objects (depth=1) move MORE with camera
+        // Far objects (depth=0) move LESS with camera
+        // This creates the "pop-out" 3D effect
+        vec2 parallaxOffset = viewOffset * depth * parallaxAmount;
+        vec2 offsetUv = vUv + parallaxOffset;
+        
+        // Clamp UVs to stay within texture
+        offsetUv = clamp(offsetUv, 0.0, 1.0);
+        
+        // Sample color at parallax-shifted UV
+        vec3 color = texture2D(imageMap, offsetUv).rgb;
+        
+        // Debug: show depth as color overlay
+        if (debugLayer > 0.5) {
+            // Visualize depth: red=close, blue=far
+            vec3 depthColor = mix(vec3(0.0, 0.3, 1.0), vec3(1.0, 0.3, 0.0), depth);
+            color = mix(color, depthColor, 0.5);
+        }
+        
+        gl_FragColor = vec4(color, opacity);
+    }
+`;
+
+/**
+ * Background Layer Fragment Shader with DEBUG
+ */
+export const BackgroundLayerFragmentDebug = `
+    uniform sampler2D imageMap;
+    uniform sampler2D inpaintedMap;
+    uniform sampler2D maskMap;
+    uniform float opacity;
+    uniform float useInpainted;
+    uniform float debugLayer; // 0=normal, 1=show as tinted
+    
+    varying vec2 vUv;
+    
+    void main() {
+        float mask = texture2D(maskMap, vUv).r;
+        
+        // Background is visible where mask is dark
+        float bgAlpha = 1.0 - smoothstep(0.3, 0.7, mask);
+        
+        if (bgAlpha < 0.01) discard;
+        
+        vec3 color;
+        if (useInpainted > 0.5) {
+            color = texture2D(inpaintedMap, vUv).rgb;
+        } else {
+            color = texture2D(imageMap, vUv).rgb;
+        }
+        
+        if (debugLayer > 0.5) {
+            // Tint background MAGENTA for debugging
+            color = mix(color, vec3(1.0, 0.0, 0.8), 0.4);
+        }
+        
+        gl_FragColor = vec4(color, bgAlpha * opacity);
+    }
+`;
+
+/**
+ * Mask Visualization Fragment Shader
+ */
+export const MaskVisualizationFragment = `
+    uniform sampler2D maskMap;
+    uniform float opacity;
+    
+    varying vec2 vUv;
+    
+    void main() {
+        float mask = texture2D(maskMap, vUv).r;
+        
+        // Visualize mask: white = foreground, black = background
+        // Add color coding: green = FG, magenta = BG
+        vec3 fgColor = vec3(0.0, 1.0, 0.3);  // Green
+        vec3 bgColor = vec3(1.0, 0.0, 0.8);  // Magenta
+        vec3 color = mix(bgColor, fgColor, mask);
+        
+        gl_FragColor = vec4(color, opacity);
+    }
+`;
+
+// =============================================================================
+// LEGACY HYBRID MODE SHADERS - Mesh + Edge Points (kept for reference)
+// =============================================================================
+
+/**
+ * Hybrid Mesh Fragment Shader
+ * Renders base mesh but FULLY hides it at depth edges to prevent stretching artifacts.
+ * Edge points will fill in those areas instead.
+ */
+export const HybridMeshFragment = `
+    uniform sampler2D imageMap;
+    uniform sampler2D depthMap;
+    uniform float opacity;
+    uniform vec2 texelSize;
+    uniform float edgeThreshold;
+    
+    varying vec2 vUv;
+    
+    float getEdgeStrength(vec2 uv) {
+        // Sample a wider area for better edge detection
+        float c = texture2D(depthMap, uv).r;
+        
+        // Sample in a cross pattern at 1x and 2x distance
+        float l1 = texture2D(depthMap, uv - vec2(texelSize.x, 0.0)).r;
+        float r1 = texture2D(depthMap, uv + vec2(texelSize.x, 0.0)).r;
+        float t1 = texture2D(depthMap, uv - vec2(0.0, texelSize.y)).r;
+        float b1 = texture2D(depthMap, uv + vec2(0.0, texelSize.y)).r;
+        
+        float l2 = texture2D(depthMap, uv - vec2(texelSize.x * 2.0, 0.0)).r;
+        float r2 = texture2D(depthMap, uv + vec2(texelSize.x * 2.0, 0.0)).r;
+        float t2 = texture2D(depthMap, uv - vec2(0.0, texelSize.y * 2.0)).r;
+        float b2 = texture2D(depthMap, uv + vec2(0.0, texelSize.y * 2.0)).r;
+        
+        // Gradient at both scales
+        float gx1 = abs(r1 - l1);
+        float gy1 = abs(b1 - t1);
+        float gx2 = abs(r2 - l2);
+        float gy2 = abs(b2 - t2);
+        
+        // Take max of both scales
+        float edge1 = sqrt(gx1 * gx1 + gy1 * gy1);
+        float edge2 = sqrt(gx2 * gx2 + gy2 * gy2);
+        
+        return max(edge1, edge2 * 0.7);
+    }
+    
+    void main() {
+        vec4 texColor = texture2D(imageMap, vUv);
+        
+        // Calculate edge strength
+        float edge = getEdgeStrength(vUv);
+        
+        // AGGRESSIVE fade at edges - completely hide mesh where stretching occurs
+        // Start fading at 50% of threshold, fully gone at threshold
+        float edgeFade = smoothstep(edgeThreshold * 0.3, edgeThreshold, edge);
+        float meshAlpha = 1.0 - edgeFade; // Fully transparent at edges
+        
+        // Discard pixels at strong edges to avoid any artifacts
+        if (meshAlpha < 0.05) discard;
+        
+        gl_FragColor = vec4(texColor.rgb, texColor.a * opacity * meshAlpha);
+    }
+`;
+
+/**
+ * Edge Point Vertex Shader
+ * Only renders points at depth discontinuities.
+ * Computes edge strength from depth gradient in real-time.
+ */
+export const EdgePointVertex = `
+    uniform sampler2D depthMap;
+    uniform float depthIntensity;
+    uniform float depthBias;
+    uniform float pointSize;
+    uniform float pointSizeAttenuation;
+    uniform vec2 texelSize;
+    uniform float edgeThreshold;
+    
+    varying vec2 vUv;
+    varying float vDepth;
+    varying float vEdge;
+    
+    // Compute depth gradient (edge strength) at this UV - multi-scale
+    float computeEdgeStrength(vec2 uv) {
+        // Sample depth at multiple scales for better edge detection
+        float c = texture2D(depthMap, uv).r;
+        
+        // Scale 1: immediate neighbors
+        float l1 = texture2D(depthMap, uv - vec2(texelSize.x, 0.0)).r;
+        float r1 = texture2D(depthMap, uv + vec2(texelSize.x, 0.0)).r;
+        float t1 = texture2D(depthMap, uv - vec2(0.0, texelSize.y)).r;
+        float b1 = texture2D(depthMap, uv + vec2(0.0, texelSize.y)).r;
+        
+        // Scale 2: 2 pixels away
+        float l2 = texture2D(depthMap, uv - vec2(texelSize.x * 2.0, 0.0)).r;
+        float r2 = texture2D(depthMap, uv + vec2(texelSize.x * 2.0, 0.0)).r;
+        float t2 = texture2D(depthMap, uv - vec2(0.0, texelSize.y * 2.0)).r;
+        float b2 = texture2D(depthMap, uv + vec2(0.0, texelSize.y * 2.0)).r;
+        
+        // Gradient at both scales
+        float gx1 = abs(r1 - l1);
+        float gy1 = abs(b1 - t1);
+        float gx2 = abs(r2 - l2);
+        float gy2 = abs(b2 - t2);
+        
+        float edge1 = sqrt(gx1 * gx1 + gy1 * gy1);
+        float edge2 = sqrt(gx2 * gx2 + gy2 * gy2);
+        
+        return max(edge1, edge2 * 0.7);
+    }
+    
+    void main() {
+        vUv = uv;
+        
+        // Compute edge strength from depth gradient
+        float edgeStrength = computeEdgeStrength(uv);
+        vEdge = edgeStrength;
+        
+        // Skip non-edge points (where depth is smooth)
+        // Use lower threshold to catch more edges
+        float threshold = edgeThreshold * 0.5;
+        if (edgeStrength < threshold) {
+            gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // Move off-screen
+            gl_PointSize = 0.0;
+            return;
+        }
+        
+        // Sample depth
+        float depth = texture2D(depthMap, uv).r;
+        vDepth = depth;
+        
+        // Displace position - use SAME depth as mesh for alignment
+        vec3 pos = position;
+        pos.z += (depth - depthBias) * depthIntensity * 0.3;
+        
+        // Transform
+        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        
+        // Point size: LARGER for better coverage
+        // Stronger edges get even bigger points
+        float edgeNorm = smoothstep(threshold, edgeThreshold * 2.0, edgeStrength);
+        float sizeBoost = 1.5 + edgeNorm * 1.0; // 1.5x to 2.5x base size
+        gl_PointSize = pointSize * sizeBoost;
+    }
+`;
+
+/**
+ * Edge Point Fragment Shader
+ * Renders edge points as soft circles with image color.
+ */
+export const EdgePointFragment = `
+    uniform sampler2D imageMap;
+    uniform float opacity;
+    uniform float pointSoftness;
+    uniform float debugEdges; // 0 = normal, 1 = show edges as color
+    
+    varying vec2 vUv;
+    varying float vDepth;
+    varying float vEdge;
+    
+    void main() {
+        // Circular point shape
+        vec2 center = gl_PointCoord - vec2(0.5);
+        float dist = length(center) * 2.0;
+        
+        // Soft edge falloff
+        float alpha = 1.0 - smoothstep(1.0 - pointSoftness, 1.0, dist);
+        if (alpha < 0.01) discard;
+        
+        vec3 color;
+        if (debugEdges > 0.5) {
+            // Debug mode: show edge points as bright cyan
+            color = vec3(0.0, 1.0, 1.0);
+        } else {
+            // Normal mode: sample color from image
+            color = texture2D(imageMap, vUv).rgb;
+        }
+        
+        gl_FragColor = vec4(color, alpha * opacity);
+    }
+`;
+
+// =============================================================================
 // SHADER COLLECTIONS
 // =============================================================================
 
 export const Shaders = {
-    // Basic displacement (default)
-    basic: {
+    // Multi-Layer mode uses basic shaders (handled separately in DepthViewer)
+    multiLayer: {
         vertex: BasicDisplacementVertex,
         fragment: BasicFragment,
         uniforms: ['depthMap', 'depthIntensity', 'depthBias', 'imageMap', 'opacity']
     },
     
-    // Edge-aware mode - fades out depth discontinuities to hide artifacts
-    edgeAware: {
-        vertex: BasicDisplacementVertex,
-        fragment: EdgeAwareFragment,
-        uniforms: ['depthMap', 'depthIntensity', 'depthBias', 'imageMap', 'opacity', 
-                   'texelSize', 'edgeThreshold', 'edgeFadeWidth']
+    // Hybrid mode - DEPTH-ONLY PARALLAX (zero artifacts!)
+    hybrid: {
+        vertex: FlatVertex,
+        fragment: DepthParallaxFragment,
+        uniforms: ['imageMap', 'depthMap', 'opacity', 'parallaxAmount', 'viewOffset', 'debugLayer']
     },
     
     // Debug modes

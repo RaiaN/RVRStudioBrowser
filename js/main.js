@@ -14,23 +14,21 @@ import { RenderMode, DebugMode } from './ImageScene.js';
 // Add your own images and depth maps to the assets folder and update this array
 // Format: { image: 'path/to/image.jpg', depth: 'path/to/depth.png', name: 'Display Name' }
 
+// Only image + depth needed for parallax effect!
 const SAMPLE_IMAGES = [
     {
         image: 'assets/IMG_20260116_161032_363.jpg',
         depth: 'assets/IMG_20260116_161032_363_depth.png',
-        mask: 'assets/IMG_20260116_161032_363_mask.png',
         name: 'He'
     },
     {
         image: 'assets/IMG_20260116_161405_615.jpg',
         depth: 'assets/IMG_20260116_161405_615_depth.png',
-        mask: 'assets/IMG_20260116_161405_615_mask.png',
         name: 'Cat'
     },
     {
         image: 'assets/IMG_20260116_163328_560.jpg',
         depth: 'assets/IMG_20260116_163328_560_depth.png',
-        mask: 'assets/IMG_20260116_163328_560_mask.png',
         name: 'She'
     }
 ];
@@ -63,8 +61,6 @@ const elements = {
     // Debug controls
     renderMode: null,
     debugMode: null,
-    edgeSoftness: null,
-    edgeSoftnessValue: null,
     diagnoseBtn: null,
     diagnosticsPanel: null,
     diagnosticsContent: null,
@@ -72,15 +68,6 @@ const elements = {
     // Multi-layer controls
     layerCountGroup: null,
     layerCount: null,
-    // Soft edges controls
-    softEdgesGroup: null,
-    softEdgesToggle: null,
-    edgeThresholdGroup: null,
-    edgeThreshold: null,
-    edgeThresholdValue: null,
-    edgeFadeGroup: null,
-    edgeFade: null,
-    edgeFadeValue: null,
 };
 
 // =============================================================================
@@ -146,8 +133,6 @@ function cacheElements() {
     // Debug controls
     elements.renderMode = document.getElementById('render-mode');
     elements.debugMode = document.getElementById('debug-mode');
-    elements.edgeSoftness = document.getElementById('edge-softness');
-    elements.edgeSoftnessValue = document.getElementById('edge-softness-value');
     elements.diagnoseBtn = document.getElementById('diagnose-btn');
     elements.diagnosticsPanel = document.getElementById('diagnostics-panel');
     elements.diagnosticsContent = document.getElementById('diagnostics-content');
@@ -155,15 +140,12 @@ function cacheElements() {
     // Multi-layer controls
     elements.layerCountGroup = document.getElementById('layer-count-group');
     elements.layerCount = document.getElementById('layer-count');
-    // Soft edges controls
-    elements.softEdgesGroup = document.getElementById('soft-edges-group');
-    elements.softEdgesToggle = document.getElementById('soft-edges-toggle');
-    elements.edgeThresholdGroup = document.getElementById('edge-threshold-group');
-    elements.edgeThreshold = document.getElementById('edge-threshold');
-    elements.edgeThresholdValue = document.getElementById('edge-threshold-value');
-    elements.edgeFadeGroup = document.getElementById('edge-fade-group');
-    elements.edgeFade = document.getElementById('edge-fade');
-    elements.edgeFadeValue = document.getElementById('edge-fade-value');
+    // Hybrid controls
+    elements.parallaxAmountGroup = document.getElementById('parallax-amount-group');
+    elements.parallaxAmount = document.getElementById('parallax-amount');
+    elements.parallaxAmountValue = document.getElementById('parallax-amount-value');
+    elements.debugLayersGroup = document.getElementById('debug-layers-group');
+    elements.debugLayersToggle = document.getElementById('debug-layers-toggle');
 }
 
 /**
@@ -229,39 +211,23 @@ function setupUIControls() {
             const mode = e.target.value;
             viewer.setRenderMode(mode);
             
-            // Show/hide layer count control based on mode
+            // Show/hide layer count control (multi-layer only)
             if (elements.layerCountGroup) {
                 elements.layerCountGroup.style.display = mode === 'multiLayer' ? 'block' : 'none';
             }
+            
+            // Show/hide hybrid controls (hybrid only)
+            const hybridGroups = document.querySelectorAll('.hybrid-group');
+            hybridGroups.forEach(group => {
+                group.style.display = mode === 'hybrid' ? 'block' : 'none';
+            });
         });
-    }
-    
-    // === SOFT EDGES CONTROLS ===
-    
-    // Soft edges toggle
-    if (elements.softEdgesToggle) {
-        elements.softEdgesToggle.addEventListener('change', (e) => {
-            viewer.setSoftEdges(e.target.checked);
-        });
-    }
-    
-    // Edge threshold slider
-    if (elements.edgeThreshold) {
-        elements.edgeThreshold.addEventListener('input', (e) => {
-            const value = parseInt(e.target.value);
-            const normalizedValue = value / 100;
-            viewer.setEdgeThreshold(normalizedValue);
-            elements.edgeThresholdValue.textContent = `${value}%`;
-        });
-    }
-    
-    // Edge fade slider
-    if (elements.edgeFade) {
-        elements.edgeFade.addEventListener('input', (e) => {
-            const value = parseInt(e.target.value);
-            const normalizedValue = value / 100;
-            viewer.setEdgeFadeWidth(normalizedValue);
-            elements.edgeFadeValue.textContent = `${value}%`;
+        
+        // Trigger initial visibility update
+        const initialMode = elements.renderMode.value;
+        const hybridGroups = document.querySelectorAll('.hybrid-group');
+        hybridGroups.forEach(group => {
+            group.style.display = initialMode === 'hybrid' ? 'block' : 'none';
         });
     }
     
@@ -273,20 +239,29 @@ function setupUIControls() {
         });
     }
     
+    // === HYBRID MODE CONTROLS ===
+    
+    // Parallax amount slider (for hybrid UV-based parallax)
+    if (elements.parallaxAmount) {
+        elements.parallaxAmount.addEventListener('input', (e) => {
+            const value = parseInt(e.target.value);
+            const normalizedValue = value / 100;  // Convert 1-10 to 0.01-0.10
+            viewer.setParallaxAmount(normalizedValue);
+            elements.parallaxAmountValue.textContent = `${value}%`;
+        });
+    }
+    
+    // Debug depth toggle (show depth visualization)
+    if (elements.debugLayersToggle) {
+        elements.debugLayersToggle.addEventListener('change', (e) => {
+            viewer.setDebugLayers(e.target.checked);
+        });
+    }
+    
     // Debug mode dropdown
     if (elements.debugMode) {
         elements.debugMode.addEventListener('change', (e) => {
             viewer.setDebugMode(e.target.value);
-        });
-    }
-    
-    // Edge softness slider
-    if (elements.edgeSoftness) {
-        elements.edgeSoftness.addEventListener('input', (e) => {
-            const value = parseInt(e.target.value);
-            const normalizedValue = value / 100;
-            viewer.setEdgeSoftness(normalizedValue);
-            elements.edgeSoftnessValue.textContent = `${value}%`;
         });
     }
     

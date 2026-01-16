@@ -18,6 +18,7 @@ tools/depths
 tools/images
 tools/masks
 tools/mpi_output
+tools/inpainted
 assets/
 
 # Node.js
