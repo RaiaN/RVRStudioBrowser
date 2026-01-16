@@ -14,6 +14,11 @@ ENV/
 dist/
 build/
 *.egg
+tools/depths
+tools/images
+tools/masks
+tools/mpi_output
+assets/
 
 # Node.js
 node_modules/

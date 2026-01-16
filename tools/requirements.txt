@@ -15,8 +15,14 @@ transformers>=4.35.0
 # Progress bars
 tqdm>=4.60.0
 
-# Optional: OpenCV (for some utilities)
-# opencv-python>=4.5.0
+# Computer Vision (for MPI generation)
+opencv-python>=4.5.0
+
+# Scientific computing (optional, improves MPI quality)
+scipy>=1.7.0
+
+# Visualization (for debug outputs)
+matplotlib>=3.5.0
 
 # ===========================================
 # Models Used (auto-downloaded by HuggingFace)

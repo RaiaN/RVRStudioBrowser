@@ -72,6 +72,15 @@ const elements = {
     // Multi-layer controls
     layerCountGroup: null,
     layerCount: null,
+    // Soft edges controls
+    softEdgesGroup: null,
+    softEdgesToggle: null,
+    edgeThresholdGroup: null,
+    edgeThreshold: null,
+    edgeThresholdValue: null,
+    edgeFadeGroup: null,
+    edgeFade: null,
+    edgeFadeValue: null,
 };
 
 // =============================================================================
@@ -146,6 +155,15 @@ function cacheElements() {
     // Multi-layer controls
     elements.layerCountGroup = document.getElementById('layer-count-group');
     elements.layerCount = document.getElementById('layer-count');
+    // Soft edges controls
+    elements.softEdgesGroup = document.getElementById('soft-edges-group');
+    elements.softEdgesToggle = document.getElementById('soft-edges-toggle');
+    elements.edgeThresholdGroup = document.getElementById('edge-threshold-group');
+    elements.edgeThreshold = document.getElementById('edge-threshold');
+    elements.edgeThresholdValue = document.getElementById('edge-threshold-value');
+    elements.edgeFadeGroup = document.getElementById('edge-fade-group');
+    elements.edgeFade = document.getElementById('edge-fade');
+    elements.edgeFadeValue = document.getElementById('edge-fade-value');
 }
 
 /**
@@ -215,6 +233,35 @@ function setupUIControls() {
             if (elements.layerCountGroup) {
                 elements.layerCountGroup.style.display = mode === 'multiLayer' ? 'block' : 'none';
             }
+        });
+    }
+    
+    // === SOFT EDGES CONTROLS ===
+    
+    // Soft edges toggle
+    if (elements.softEdgesToggle) {
+        elements.softEdgesToggle.addEventListener('change', (e) => {
+            viewer.setSoftEdges(e.target.checked);
+        });
+    }
+    
+    // Edge threshold slider
+    if (elements.edgeThreshold) {
+        elements.edgeThreshold.addEventListener('input', (e) => {
+            const value = parseInt(e.target.value);
+            const normalizedValue = value / 100;
+            viewer.setEdgeThreshold(normalizedValue);
+            elements.edgeThresholdValue.textContent = `${value}%`;
+        });
+    }
+    
+    // Edge fade slider
+    if (elements.edgeFade) {
+        elements.edgeFade.addEventListener('input', (e) => {
+            const value = parseInt(e.target.value);
+            const normalizedValue = value / 100;
+            viewer.setEdgeFadeWidth(normalizedValue);
+            elements.edgeFadeValue.textContent = `${value}%`;
         });
     }
     

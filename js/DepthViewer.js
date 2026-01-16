@@ -37,6 +37,9 @@ export class DepthViewer {
             nearPlane: 0.1,
             farPlane: 100,
             layerCount: 2,            // Number of layers for multi-layer mode
+            softEdges: true,          // Enable edge artifact fading
+            edgeThreshold: 0.06,      // Depth difference that triggers fade
+            edgeFadeWidth: 0.12,      // How gradual the fade is
         };
         
         // Mouse tracking
@@ -310,9 +313,6 @@ export class DepthViewer {
         
         // Update depth info
         this._updateDepthInfo();
-        
-        // Update light direction to follow mouse (for "lit" mode)
-        this.updateLightFromMouse();
         
         // Update active scenes
         this.scenes.forEach((scene, index) => {
@@ -813,7 +813,11 @@ export class DepthViewer {
                 resolution, Math.floor(resolution / aspectRatio)
             );
             
-            // Shader that only shows pixels belonging to this layer
+            // Calculate texel size for edge detection
+            const texWidth = scene.imageTexture.image.width;
+            const texHeight = scene.imageTexture.image.height;
+            
+            // Shader that only shows pixels belonging to this layer + edge fading
             const material = new THREE.ShaderMaterial({
                 uniforms: {
                     imageMap: { value: scene.imageTexture },
@@ -823,20 +827,59 @@ export class DepthViewer {
                     depthIntensity: { value: this.config.depthIntensity },
                     opacity: { value: visible ? 1.0 : 0.0 },
                     tolerance: { value: tolerance },
+                    // Edge fading uniforms
+                    texelSize: { value: new THREE.Vector2(1.0 / texWidth, 1.0 / texHeight) },
+                    edgeThreshold: { value: this.config.edgeThreshold },
+                    edgeFadeWidth: { value: this.config.edgeFadeWidth },
+                    softEdges: { value: this.config.softEdges ? 1.0 : 0.0 },
                 },
                 vertexShader: `
                     uniform sampler2D depthMap;
                     uniform float depthIntensity;
+                    uniform vec2 texelSize;
+                    uniform float edgeThreshold;
+                    uniform float edgeFadeWidth;
+                    uniform float softEdges;
                     
                     varying vec2 vUv;
+                    varying float vEdgeFactor;
+                    
+                    // Detect depth edges
+                    float getEdgeStrength(vec2 uv) {
+                        if (softEdges < 0.5) return 0.0;
+                        
+                        float center = texture2D(depthMap, uv).r;
+                        float l1 = texture2D(depthMap, uv + vec2(-texelSize.x, 0.0)).r;
+                        float r1 = texture2D(depthMap, uv + vec2( texelSize.x, 0.0)).r;
+                        float t1 = texture2D(depthMap, uv + vec2(0.0,  texelSize.y)).r;
+                        float b1 = texture2D(depthMap, uv + vec2(0.0, -texelSize.y)).r;
+                        float tl = texture2D(depthMap, uv + vec2(-texelSize.x,  texelSize.y)).r;
+                        float tr = texture2D(depthMap, uv + vec2( texelSize.x,  texelSize.y)).r;
+                        float bl = texture2D(depthMap, uv + vec2(-texelSize.x, -texelSize.y)).r;
+                        float br = texture2D(depthMap, uv + vec2( texelSize.x, -texelSize.y)).r;
+                        
+                        float maxDiff = max(
+                            max(max(abs(center - l1), abs(center - r1)),
+                                max(abs(center - t1), abs(center - b1))),
+                            max(max(abs(center - tl), abs(center - tr)),
+                                max(abs(center - bl), abs(center - br)))
+                        );
+                        
+                        return smoothstep(edgeThreshold, edgeThreshold + edgeFadeWidth, maxDiff);
+                    }
                     
                     void main() {
                         vUv = uv;
                         
                         float depth = texture2D(depthMap, uv).r;
+                        float edgeStrength = getEdgeStrength(uv);
+                        vEdgeFactor = edgeStrength;
+                        
+                        // REDUCE displacement at edges to prevent triangle stretching!
+                        float effectiveIntensity = depthIntensity * (1.0 - edgeStrength * 0.85);
                         
                         vec3 displaced = position;
-                        displaced.z += (depth - 0.5) * depthIntensity;
+                        displaced.z += (depth - 0.5) * effectiveIntensity;
                         
                         gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
                     }
@@ -847,8 +890,10 @@ export class DepthViewer {
                     uniform float layerId;
                     uniform float opacity;
                     uniform float tolerance;
+                    uniform float softEdges;
                     
                     varying vec2 vUv;
+                    varying float vEdgeFactor;  // From vertex shader
                     
                     void main() {
                         float maskValue = texture2D(maskMap, vUv).r;
@@ -859,7 +904,16 @@ export class DepthViewer {
                         }
                         
                         vec4 texColor = texture2D(imageMap, vUv);
-                        gl_FragColor = vec4(texColor.rgb, texColor.a * opacity);
+                        
+                        // Apply edge fading using vertex-calculated factor
+                        // (The vertex shader already reduced displacement, this adds alpha fade)
+                        float edgeAlpha = softEdges > 0.5 ? (1.0 - vEdgeFactor * 0.7) : 1.0;
+                        float alpha = edgeAlpha * opacity;
+                        
+                        // Discard fully transparent pixels
+                        if (alpha < 0.01) discard;
+                        
+                        gl_FragColor = vec4(texColor.rgb, texColor.a * alpha);
                     }
                 `,
                 transparent: true,
@@ -905,6 +959,25 @@ export class DepthViewer {
     }
     
     /**
+     * Update edge fading settings for multi-layer mode
+     */
+    _updateLayerEdgeSettings() {
+        this.multiLayerGroups.forEach(group => {
+            group.layers.forEach(layer => {
+                if (layer.material.uniforms.edgeThreshold) {
+                    layer.material.uniforms.edgeThreshold.value = this.config.edgeThreshold;
+                }
+                if (layer.material.uniforms.edgeFadeWidth) {
+                    layer.material.uniforms.edgeFadeWidth.value = this.config.edgeFadeWidth;
+                }
+                if (layer.material.uniforms.softEdges) {
+                    layer.material.uniforms.softEdges.value = this.config.softEdges ? 1.0 : 0.0;
+                }
+            });
+        });
+    }
+    
+    /**
      * Set visibility for a multi-layer group
      */
     _setLayerGroupVisible(groupIndex, visible) {
@@ -938,6 +1011,54 @@ export class DepthViewer {
     }
     
     /**
+     * Set edge threshold for artifact fading
+     * @param {number} value - Depth difference threshold (0.02-0.2)
+     */
+    setEdgeThreshold(value) {
+        this.config.edgeThreshold = value;
+        this.scenes.forEach(scene => {
+            scene.setEdgeThreshold(value);
+        });
+        // Also update multi-layer groups
+        if (this.isMultiLayerMode) {
+            this._updateLayerEdgeSettings();
+        }
+    }
+    
+    /**
+     * Set edge fade width for artifact hiding
+     * @param {number} value - Fade width (0.05-0.3)
+     */
+    setEdgeFadeWidth(value) {
+        this.config.edgeFadeWidth = value;
+        this.scenes.forEach(scene => {
+            scene.setEdgeFadeWidth(value);
+        });
+        // Also update multi-layer groups
+        if (this.isMultiLayerMode) {
+            this._updateLayerEdgeSettings();
+        }
+    }
+    
+    /**
+     * Toggle soft edges for multi-layer mode
+     * @param {boolean} enabled - Enable edge fading
+     */
+    setSoftEdges(enabled) {
+        this.config.softEdges = enabled;
+        
+        // Update single-mesh scenes
+        this.scenes.forEach(scene => {
+            scene.setSoftEdges(enabled);
+        });
+        
+        // Update multi-layer groups if in that mode
+        if (this.isMultiLayerMode) {
+            this._updateLayerEdgeSettings();
+        }
+    }
+    
+    /**
      * Get diagnostics for current image
      * @returns {Object|null} Diagnostic information
      */
@@ -947,32 +1068,6 @@ export class DepthViewer {
             return currentScene.getDiagnostics();
         }
         return null;
-    }
-    
-    /**
-     * Set light direction for all scenes (used in "lit" mode)
-     * Light follows mouse for dynamic effect
-     * @param {number} x - X direction
-     * @param {number} y - Y direction
-     */
-    setLightDirection(x, y) {
-        this.scenes.forEach(scene => {
-            scene.setLightDirection(x, y, 1.0);
-        });
-    }
-    
-    /**
-     * Update light to follow mouse (call in render loop)
-     */
-    updateLightFromMouse() {
-        // Light direction follows mouse for dynamic shading
-        this.scenes.forEach(scene => {
-            scene.setLightDirection(
-                this.mouse.x * 0.5 + 0.5,
-                this.mouse.y * 0.5 + 0.5,
-                1.0
-            );
-        });
     }
     
     /**

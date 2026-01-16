@@ -78,9 +78,29 @@
         <div class="control-group">
             <label for="render-mode">Render Mode</label>
             <select id="render-mode">
-                <option value="basic" selected>Basic</option>
-                <option value="multiLayer">Multi-Layer ⭐</option>
+                <option value="basic">Basic</option>
+                <option value="edgeAware" selected>Soft Edges ⭐</option>
+                <option value="multiLayer">Multi-Layer</option>
             </select>
+        </div>
+        
+        <div class="control-group" id="soft-edges-group">
+            <label>
+                <input type="checkbox" id="soft-edges-toggle" checked>
+                Soft Edges (hide artifacts)
+            </label>
+        </div>
+        
+        <div class="control-group" id="edge-threshold-group">
+            <label for="edge-threshold">Edge Threshold</label>
+            <input type="range" id="edge-threshold" min="1" max="20" value="6">
+            <span id="edge-threshold-value">6%</span>
+        </div>
+        
+        <div class="control-group" id="edge-fade-group">
+            <label for="edge-fade">Edge Fade</label>
+            <input type="range" id="edge-fade" min="1" max="30" value="12">
+            <span id="edge-fade-value">12%</span>
         </div>
         
         <div class="control-group" id="layer-count-group" style="display: none;">

@@ -14,16 +14,49 @@
 
 /**
  * Basic depth displacement - displaces vertices based on depth map
+ * Now with optional edge-aware displacement reduction to prevent stretching
  */
 export const BasicDisplacementVertex = `
     uniform sampler2D depthMap;
     uniform float depthIntensity;
     uniform float depthBias;
+    uniform vec2 texelSize;
+    uniform float edgeThreshold;
+    uniform float edgeFadeWidth;
+    uniform float softEdges;  // 0 or 1 - enable edge-aware displacement
     
     varying vec2 vUv;
     varying float vDepth;
+    varying float vEdgeFactor;
     varying vec3 vNormal;
     varying vec3 vViewPosition;
+    
+    // Detect depth discontinuities
+    float getEdgeStrength(vec2 uv) {
+        if (softEdges < 0.5) return 0.0;
+        
+        float center = texture2D(depthMap, uv).r;
+        
+        // Sample 8 neighbors
+        float l1 = texture2D(depthMap, uv + vec2(-texelSize.x, 0.0)).r;
+        float r1 = texture2D(depthMap, uv + vec2( texelSize.x, 0.0)).r;
+        float t1 = texture2D(depthMap, uv + vec2(0.0,  texelSize.y)).r;
+        float b1 = texture2D(depthMap, uv + vec2(0.0, -texelSize.y)).r;
+        float tl = texture2D(depthMap, uv + vec2(-texelSize.x,  texelSize.y)).r;
+        float tr = texture2D(depthMap, uv + vec2( texelSize.x,  texelSize.y)).r;
+        float bl = texture2D(depthMap, uv + vec2(-texelSize.x, -texelSize.y)).r;
+        float br = texture2D(depthMap, uv + vec2( texelSize.x, -texelSize.y)).r;
+        
+        // Max depth difference
+        float maxDiff = max(
+            max(max(abs(center - l1), abs(center - r1)),
+                max(abs(center - t1), abs(center - b1))),
+            max(max(abs(center - tl), abs(center - tr)),
+                max(abs(center - bl), abs(center - br)))
+        );
+        
+        return smoothstep(edgeThreshold, edgeThreshold + edgeFadeWidth, maxDiff);
+    }
     
     void main() {
         vUv = uv;
@@ -32,9 +65,16 @@ export const BasicDisplacementVertex = `
         float depth = texture2D(depthMap, uv).r;
         vDepth = depth;
         
+        // Detect if this vertex is at a depth edge
+        float edgeStrength = getEdgeStrength(uv);
+        vEdgeFactor = edgeStrength;
+        
+        // REDUCE displacement at edges to prevent triangle stretching!
+        float effectiveIntensity = depthIntensity * (1.0 - edgeStrength * 0.85);
+        
         // Displace vertex along Z axis
         vec3 displaced = position;
-        displaced.z += (depth - depthBias) * depthIntensity;
+        displaced.z += (depth - depthBias) * effectiveIntensity;
         
         // Transform normal
         vNormal = normalize(normalMatrix * normal);
@@ -48,7 +88,8 @@ export const BasicDisplacementVertex = `
 `;
 
 /**
- * Edge-aware displacement - smooths depth at edges to reduce artifacts
+ * Edge-aware displacement - REDUCES displacement at depth edges to prevent stretching
+ * This is the KEY fix for edge artifacts!
  */
 export const EdgeAwareDisplacementVertex = `
     uniform sampler2D depthMap;
@@ -56,44 +97,72 @@ export const EdgeAwareDisplacementVertex = `
     uniform float depthBias;
     uniform vec2 texelSize;  // 1.0 / texture resolution
     uniform float edgeSoftness;
+    uniform float edgeThreshold;
+    uniform float edgeFadeWidth;
     
     varying vec2 vUv;
     varying float vDepth;
+    varying float vEdgeFactor;  // Pass to fragment for additional fading
     varying vec3 vNormal;
     varying vec3 vViewPosition;
     
-    // Sample depth with edge-aware bilateral-like filtering
-    float sampleDepthSmooth(vec2 uv) {
+    // Detect depth edges and return edge strength (0 = no edge, 1 = strong edge)
+    float getEdgeStrength(vec2 uv) {
         float center = texture2D(depthMap, uv).r;
         
-        // Sample neighbors
-        float left   = texture2D(depthMap, uv + vec2(-texelSize.x, 0.0)).r;
-        float right  = texture2D(depthMap, uv + vec2( texelSize.x, 0.0)).r;
-        float top    = texture2D(depthMap, uv + vec2(0.0,  texelSize.y)).r;
-        float bottom = texture2D(depthMap, uv + vec2(0.0, -texelSize.y)).r;
+        // Sample neighbors at multiple scales for robust edge detection
+        float l1 = texture2D(depthMap, uv + vec2(-texelSize.x, 0.0)).r;
+        float r1 = texture2D(depthMap, uv + vec2( texelSize.x, 0.0)).r;
+        float t1 = texture2D(depthMap, uv + vec2(0.0,  texelSize.y)).r;
+        float b1 = texture2D(depthMap, uv + vec2(0.0, -texelSize.y)).r;
         
-        // Calculate edge strength (depth discontinuity)
-        float edgeH = abs(left - right);
-        float edgeV = abs(top - bottom);
-        float edge = max(edgeH, edgeV);
+        // Diagonal neighbors
+        float tl = texture2D(depthMap, uv + vec2(-texelSize.x,  texelSize.y)).r;
+        float tr = texture2D(depthMap, uv + vec2( texelSize.x,  texelSize.y)).r;
+        float bl = texture2D(depthMap, uv + vec2(-texelSize.x, -texelSize.y)).r;
+        float br = texture2D(depthMap, uv + vec2( texelSize.x, -texelSize.y)).r;
         
-        // Blend towards average at edges
-        float avg = (left + right + top + bottom) * 0.25;
-        float blendFactor = smoothstep(0.0, edgeSoftness, edge);
+        // 2-pixel radius for larger discontinuities
+        float l2 = texture2D(depthMap, uv + vec2(-texelSize.x * 2.0, 0.0)).r;
+        float r2 = texture2D(depthMap, uv + vec2( texelSize.x * 2.0, 0.0)).r;
+        float t2 = texture2D(depthMap, uv + vec2(0.0,  texelSize.y * 2.0)).r;
+        float b2 = texture2D(depthMap, uv + vec2(0.0, -texelSize.y * 2.0)).r;
         
-        return mix(center, avg, blendFactor * 0.5);
+        // Maximum depth difference from center
+        float maxDiff = max(
+            max(max(abs(center - l1), abs(center - r1)),
+                max(abs(center - t1), abs(center - b1))),
+            max(max(abs(center - tl), abs(center - tr)),
+                max(abs(center - bl), abs(center - br)))
+        );
+        
+        // Include larger radius
+        float maxDiff2 = max(
+            max(abs(center - l2), abs(center - r2)),
+            max(abs(center - t2), abs(center - b2))
+        );
+        maxDiff = max(maxDiff, maxDiff2 * 0.7);
+        
+        return smoothstep(edgeThreshold, edgeThreshold + edgeFadeWidth, maxDiff);
     }
     
     void main() {
         vUv = uv;
         
-        // Use edge-aware depth sampling
-        float depth = sampleDepthSmooth(uv);
-        vDepth = depth;
+        float centerDepth = texture2D(depthMap, uv).r;
+        vDepth = centerDepth;
         
-        // Displace vertex
+        // Detect if this vertex is at a depth edge
+        float edgeStrength = getEdgeStrength(uv);
+        vEdgeFactor = edgeStrength;
+        
+        // REDUCE displacement at edges - this prevents triangle stretching!
+        // At strong edges, pull displacement toward neutral (depthBias)
+        float effectiveIntensity = depthIntensity * (1.0 - edgeStrength * 0.8);
+        
+        // Displace vertex with reduced intensity at edges
         vec3 displaced = position;
-        displaced.z += (depth - depthBias) * depthIntensity;
+        displaced.z += (centerDepth - depthBias) * effectiveIntensity;
         
         vNormal = normalize(normalMatrix * normal);
         
@@ -109,76 +178,84 @@ export const EdgeAwareDisplacementVertex = `
 // =============================================================================
 
 /**
- * Basic textured output
+ * Basic textured output - with optional edge fading from vertex shader
  */
 export const BasicFragment = `
     uniform sampler2D imageMap;
     uniform float opacity;
+    uniform float softEdges;
     
     varying vec2 vUv;
     varying float vDepth;
+    varying float vEdgeFactor;
     
     void main() {
         vec4 texColor = texture2D(imageMap, vUv);
-        gl_FragColor = vec4(texColor.rgb, texColor.a * opacity);
+        
+        // Additional alpha fade at edges (from vertex-calculated edge factor)
+        float edgeAlpha = softEdges > 0.5 ? (1.0 - vEdgeFactor * 0.7) : 1.0;
+        
+        gl_FragColor = vec4(texColor.rgb, texColor.a * opacity * edgeAlpha);
     }
 `;
 
 /**
- * Lit fragment shader - uses depth-derived normals for lighting
- * This adds subtle 3D shading to enhance the depth effect
+ * Edge-aware fragment - fades out pixels at depth discontinuities
+ * This is the KEY to hiding stretching artifacts!
  */
-export const LitFragment = `
+export const EdgeAwareFragment = `
     uniform sampler2D imageMap;
     uniform sampler2D depthMap;
     uniform vec2 texelSize;
     uniform float opacity;
-    uniform float lightIntensity;
-    uniform vec3 lightDirection;
+    uniform float edgeThreshold;    // Depth difference that triggers fade (0.02-0.15)
+    uniform float edgeFadeWidth;    // How gradual the fade is (0.05-0.3)
     
     varying vec2 vUv;
     varying float vDepth;
-    varying vec3 vNormal;
-    varying vec3 vViewPosition;
-    
-    // Calculate normal from depth map gradient
-    vec3 calculateNormalFromDepth(vec2 uv) {
-        // Sample neighboring depth values
-        float left  = texture2D(depthMap, uv + vec2(-texelSize.x, 0.0)).r;
-        float right = texture2D(depthMap, uv + vec2( texelSize.x, 0.0)).r;
-        float up    = texture2D(depthMap, uv + vec2(0.0,  texelSize.y)).r;
-        float down  = texture2D(depthMap, uv + vec2(0.0, -texelSize.y)).r;
-        
-        // Calculate gradient (slope)
-        float dx = (right - left) * 2.0;
-        float dy = (up - down) * 2.0;
-        
-        // Convert gradient to normal vector
-        // The Z component controls how "bumpy" the surface appears
-        vec3 normal = normalize(vec3(-dx, -dy, 0.1));
-        
-        return normal;
-    }
     
     void main() {
         vec4 texColor = texture2D(imageMap, vUv);
+        float centerDepth = texture2D(depthMap, vUv).r;
         
-        // Calculate surface normal from depth gradient
-        vec3 normal = calculateNormalFromDepth(vUv);
+        // Sample depth in a larger neighborhood for robust edge detection
+        // Use 2-pixel radius for better coverage of stretched triangles
+        float l1  = texture2D(depthMap, vUv + vec2(-texelSize.x, 0.0)).r;
+        float r1  = texture2D(depthMap, vUv + vec2( texelSize.x, 0.0)).r;
+        float t1  = texture2D(depthMap, vUv + vec2(0.0,  texelSize.y)).r;
+        float b1  = texture2D(depthMap, vUv + vec2(0.0, -texelSize.y)).r;
         
-        // Simple directional lighting
-        vec3 lightDir = normalize(lightDirection);
-        float NdotL = max(dot(normal, lightDir), 0.0);
+        float l2  = texture2D(depthMap, vUv + vec2(-texelSize.x * 2.0, 0.0)).r;
+        float r2  = texture2D(depthMap, vUv + vec2( texelSize.x * 2.0, 0.0)).r;
+        float t2  = texture2D(depthMap, vUv + vec2(0.0,  texelSize.y * 2.0)).r;
+        float b2  = texture2D(depthMap, vUv + vec2(0.0, -texelSize.y * 2.0)).r;
         
-        // Ambient + diffuse lighting
-        float ambient = 0.7;
-        float diffuse = NdotL * lightIntensity;
-        float lighting = ambient + diffuse * 0.3;
+        // Diagonal samples
+        float tl = texture2D(depthMap, vUv + vec2(-texelSize.x,  texelSize.y)).r;
+        float tr = texture2D(depthMap, vUv + vec2( texelSize.x,  texelSize.y)).r;
+        float bl = texture2D(depthMap, vUv + vec2(-texelSize.x, -texelSize.y)).r;
+        float br = texture2D(depthMap, vUv + vec2( texelSize.x, -texelSize.y)).r;
         
-        // Apply lighting to texture
-        vec3 litColor = texColor.rgb * lighting;
+        // Calculate maximum depth difference from center (edges)
+        float maxDiff = max(
+            max(max(abs(centerDepth - l1), abs(centerDepth - r1)),
+                max(abs(centerDepth - t1), abs(centerDepth - b1))),
+            max(max(abs(centerDepth - tl), abs(centerDepth - tr)),
+                max(abs(centerDepth - bl), abs(centerDepth - br)))
+        );
         
-        gl_FragColor = vec4(litColor, texColor.a * opacity);
+        // Also check 2-pixel neighbors for larger discontinuities
+        float maxDiff2 = max(
+            max(abs(centerDepth - l2), abs(centerDepth - r2)),
+            max(abs(centerDepth - t2), abs(centerDepth - b2))
+        );
+        maxDiff = max(maxDiff, maxDiff2 * 0.7);
+        
+        // Smooth fade based on edge strength
+        float edgeFactor = smoothstep(edgeThreshold, edgeThreshold + edgeFadeWidth, maxDiff);
+        float alpha = (1.0 - edgeFactor) * opacity;
+        
+        gl_FragColor = vec4(texColor.rgb, texColor.a * alpha);
     }
 `;
 
@@ -414,6 +491,14 @@ export const Shaders = {
         vertex: BasicDisplacementVertex,
         fragment: BasicFragment,
         uniforms: ['depthMap', 'depthIntensity', 'depthBias', 'imageMap', 'opacity']
+    },
+    
+    // Edge-aware mode - fades out depth discontinuities to hide artifacts
+    edgeAware: {
+        vertex: BasicDisplacementVertex,
+        fragment: EdgeAwareFragment,
+        uniforms: ['depthMap', 'depthIntensity', 'depthBias', 'imageMap', 'opacity', 
+                   'texelSize', 'edgeThreshold', 'edgeFadeWidth']
     },
     
     // Debug modes

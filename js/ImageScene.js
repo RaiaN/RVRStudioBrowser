@@ -12,8 +12,9 @@ import { Shaders } from './shaders/DepthDisplacement.glsl.js';
 
 // Rendering modes
 export const RenderMode = {
-    BASIC: 'basic',           // Simple vertex displacement
-    MULTI_LAYER: 'multiLayer', // ⭐ Separates into layers - best quality
+    BASIC: 'basic',            // Simple vertex displacement
+    EDGE_AWARE: 'edgeAware',   // Basic + edge fade (hides artifacts) ⭐
+    MULTI_LAYER: 'multiLayer', // Separates into layers
 };
 
 // Debug visualization modes
@@ -124,18 +125,16 @@ export class ImageScene {
             texelSize: { value: new THREE.Vector2(1.0 / texWidth, 1.0 / texHeight) },
             edgeSoftness: { value: 0.15 },
             
-            // For edge debug
-            edgeThreshold: { value: 0.1 },
+            // For edge fading (artifact hiding)
+            edgeThreshold: { value: 0.06 },    // Depth difference that triggers fade
+            edgeFadeWidth: { value: 0.12 },    // How gradual the fade is
+            softEdges: { value: 1.0 },         // Enable soft edges (1.0 = on, 0.0 = off)
             
             // For depth debug
             colorMode: { value: 0 },
             
             // For parallax
             numLayers: { value: 32 },
-            
-            // For lighting (depth → normal → shading)
-            lightIntensity: { value: 1.0 },
-            lightDirection: { value: new THREE.Vector3(0.5, 0.5, 1.0) },
             
             // Resolution
             resolution: { value: new THREE.Vector2(texWidth, texHeight) }
@@ -289,11 +288,32 @@ export class ImageScene {
     }
     
     /**
-     * Set edge threshold for debug view
+     * Set edge threshold for artifact fading
+     * @param {number} value - Depth difference that triggers fade (0.02-0.2)
      */
     setEdgeThreshold(value) {
         if (this.uniforms) {
             this.uniforms.edgeThreshold.value = value;
+        }
+    }
+    
+    /**
+     * Set edge fade width for artifact hiding
+     * @param {number} value - How gradual the fade is (0.05-0.3)
+     */
+    setEdgeFadeWidth(value) {
+        if (this.uniforms) {
+            this.uniforms.edgeFadeWidth.value = value;
+        }
+    }
+    
+    /**
+     * Enable/disable soft edges (reduces displacement + alpha at depth edges)
+     * @param {boolean} enabled - true to enable
+     */
+    setSoftEdges(enabled) {
+        if (this.uniforms) {
+            this.uniforms.softEdges.value = enabled ? 1.0 : 0.0;
         }
     }
     
@@ -303,28 +323,6 @@ export class ImageScene {
     setParallaxQuality(layers) {
         if (this.uniforms) {
             this.uniforms.numLayers.value = layers;
-        }
-    }
-    
-    /**
-     * Set light direction (for lit mode)
-     * @param {number} x - X direction (-1 to 1)
-     * @param {number} y - Y direction (-1 to 1) 
-     * @param {number} z - Z direction (usually positive)
-     */
-    setLightDirection(x, y, z) {
-        if (this.uniforms) {
-            this.uniforms.lightDirection.value.set(x, y, z);
-        }
-    }
-    
-    /**
-     * Set light intensity
-     * @param {number} intensity - Light strength (0-2)
-     */
-    setLightIntensity(intensity) {
-        if (this.uniforms) {
-            this.uniforms.lightIntensity.value = intensity;
         }
     }
     
